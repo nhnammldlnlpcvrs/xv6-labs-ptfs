@@ -437,3 +437,36 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+// Hàm bổ trợ in đệ quy bảng phân trang
+void
+_vmprint(pagetable_t pagetable, int level)
+{
+  // Có 512 entries trong một trang bảng phân trang
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      // In dấu chấm dựa trên cấp độ (level)
+      for(int j = 0; j <= level; j++){
+        if(j > 0) printf(" ");
+        printf("..");
+      }
+
+      uint64 pa = PTE2PA(pte);
+      printf("%d: pte %p pa %p\n", i, pte, pa);
+
+      // Nếu không phải là trang lá (R, W, X đều bằng 0), tiếp tục đệ quy
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+        _vmprint((pagetable_t)pa, level + 1);
+      }
+    }
+  }
+}
+
+// Hàm chính để in bảng phân trang
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  _vmprint(pagetable, 0);
+}
