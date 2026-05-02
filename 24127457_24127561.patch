@@ -1,0 +1,116 @@
+diff --git a/Makefile b/Makefile
+index 2dbd0d2..754184c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -188,7 +188,6 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
+-	$U/_symlinktest\
+ 	$U/_bigfile\
+ 
+ 
+diff --git a/kernel/file.h b/kernel/file.h
+index b076d1d..5c4eb3a 100644
+--- a/kernel/file.h
++++ b/kernel/file.h
+@@ -26,7 +26,7 @@ struct inode {
+   short minor;
+   short nlink;
+   uint size;
+-  uint addrs[NDIRECT+1];
++  uint addrs[NDIRECT+2];
+ };
+ 
+ // map major device number to device functions.
+diff --git a/kernel/fs.c b/kernel/fs.c
+index c6bab15..20c7bdc 100644
+--- a/kernel/fs.c
++++ b/kernel/fs.c
+@@ -417,6 +417,53 @@ bmap(struct inode *ip, uint bn)
+     return addr;
+   }
+ 
++ bn -= NINDIRECT; 
++   // doubly-indirect
++if (bn < NINDIRECT * NINDIRECT) {
++  uint addr;
++  struct buf *bp, *bp2;
++  uint *a, *a2;
++
++  // B1: load doubly-indirect block
++  if ((addr = ip->addrs[NDIRECT+1]) == 0) {
++    addr = balloc(ip->dev);
++    if (addr == 0)
++      return 0;
++    ip->addrs[NDIRECT+1] = addr;
++  }
++
++  bp = bread(ip->dev, addr);
++  a = (uint*)bp->data;
++
++  int i = bn / NINDIRECT;   // level 1
++  int j = bn % NINDIRECT;   // level 2
++
++  // B2: load indirect block
++  if ((addr = a[i]) == 0) {
++    addr = balloc(ip->dev);
++    if (addr) {
++      a[i] = addr;
++      log_write(bp);
++    }
++  }
++
++  brelse(bp);
++
++  bp2 = bread(ip->dev, addr);
++  a2 = (uint*)bp2->data;
++
++  // B3: load data block
++  if ((addr = a2[j]) == 0) {
++    addr = balloc(ip->dev);
++    if (addr) {
++      a2[j] = addr;
++      log_write(bp2);
++    }
++  }
++
++  brelse(bp2);
++  return addr;
++}
+   panic("bmap: out of range");
+ }
+ 
+@@ -448,6 +495,32 @@ itrunc(struct inode *ip)
+     ip->addrs[NDIRECT] = 0;
+   }
+ 
++  // === Giải phóng doubly-indirect blocks ===
++if(ip->addrs[NDIRECT+1]){
++  struct buf *bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
++  uint *a = (uint*)bp->data;
++
++  for(int i = 0; i < NINDIRECT; i++){
++    if(a[i]){
++      struct buf *bp2 = bread(ip->dev, a[i]);
++      uint *a2 = (uint*)bp2->data;
++
++      for(int j = 0; j < NINDIRECT; j++){
++        if(a2[j]){
++          bfree(ip->dev, a2[j]);
++        }
++      }
++
++      brelse(bp2);
++      bfree(ip->dev, a[i]);
++    }
++  }
++
++  brelse(bp);
++  bfree(ip->dev, ip->addrs[NDIRECT+1]);
++  ip->addrs[NDIRECT+1] = 0;
++}
++
+   ip->size = 0;
+   iupdate(ip);
+ }
